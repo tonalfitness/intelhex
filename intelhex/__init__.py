@@ -1121,16 +1121,15 @@ class IntelHex16bit(IntelHex):
             byte2 = self._buf.get(2 * addr + 1, None)
 
             if addr == 0x85000:
-                print(byte1, byte2)
+                print(byte2, byte1)
 
-            bin.extend([byte1, byte2])
+            bin.extend([byte2, byte1])
 
         print(bin)
-
         return bin
 
     def _tobinstr_really(self, start, end, pad, size):
-        return array_tobytes(self.tobinarray(start, end, size))
+        return self.tobinarray(start, end, size)
 
     def tobinfile(self, fobj, start=None, end=None, pad=_DEPRECATED, size=None):
         '''Convert to binary and write to file.
