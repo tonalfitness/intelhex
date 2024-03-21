@@ -188,6 +188,96 @@ class IntelHex(object):
                                        bin[7]),
                               }
 
+    def _decode_16bit_record(self, s, line=0):
+        '''Decode one record of a hex file with 16 bit data / addresses
+
+        @param  s       line with HEX record.
+        @param  line    line number (for error messages).
+
+        @raise  EndOfFile   if EOF record encountered.
+        '''
+        s = s.rstrip('\r\n')
+        if not s:
+            return          # empty line
+
+        if s[0] == ':':
+            try:
+                bin = array('B', unhexlify(asbytes(s[1:])))
+            except (TypeError, ValueError):
+                # this might be raised by unhexlify when odd hexascii digits
+                raise HexRecordError(line=line)
+            length = len(bin)
+            if length < 5:
+                raise HexRecordError(line=line)
+        else:
+            raise HexRecordError(line=line)
+
+        record_length = bin[0]
+        if length != (5 + record_length):
+            raise RecordLengthError(line=line)
+
+        addr = (bin[1]*256 + bin[2]) * 2
+
+        record_type = bin[3]
+        if not (0 <= record_type <= 5):
+            raise RecordTypeError(line=line)
+
+        crc = sum(bin)
+        crc &= 0x0FF
+        if crc != 0:
+            raise RecordChecksumError(line=line)
+
+        if record_type == 0:
+            # data record
+            addr += self._offset
+            for i in range_g(4, 4+record_length):
+                if not self._buf.get(addr, None) is None:
+                    raise AddressOverlapError(address=addr, line=line)
+                self._buf[addr] = bin[i]
+                addr += 1   # FIXME: addr should be wrapped 
+                            # BUT after 02 record (at 64K boundary)
+                            # and after 04 record (at 4G boundary)
+
+        elif record_type == 1:
+            # end of file record
+            if record_length != 0:
+                raise EOFRecordError(line=line)
+            raise _EndOfFile
+
+        elif record_type == 2:
+            # Extended 8086 Segment Record
+            if record_length != 2 or addr != 0:
+                raise ExtendedSegmentAddressRecordError(line=line)
+            self._offset = (bin[4]*256 + bin[5]) * 16
+
+        elif record_type == 4:
+            # Extended Linear Address Record
+            if record_length != 2 or addr != 0:
+                raise ExtendedLinearAddressRecordError(line=line)
+            self._offset = (bin[4]*256 + bin[5]) * 2 * 65536
+
+        elif record_type == 3:
+            # Start Segment Address Record
+            if record_length != 4 or addr != 0:
+                raise StartSegmentAddressRecordError(line=line)
+            if self.start_addr:
+                raise DuplicateStartAddressRecordError(line=line)
+            self.start_addr = {'CS': bin[4]*256 + bin[5],
+                               'IP': bin[6]*256 + bin[7],
+                              }
+
+        elif record_type == 5:
+            # Start Linear Address Record
+            if record_length != 4 or addr != 0:
+                raise StartLinearAddressRecordError(line=line)
+            if self.start_addr:
+                raise DuplicateStartAddressRecordError(line=line)
+            self.start_addr = {'EIP': (bin[4]*16777216 +
+                                       bin[5]*65536 +
+                                       bin[6]*256 +
+                                       bin[7]),
+                              }
+
     def loadhex(self, fobj):
         """Load hex file into internal buffer. This is not necessary
         if object was initialized with source set. This will overwrite
@@ -205,7 +295,7 @@ class IntelHex(object):
         line = 0
 
         try:
-            decode = self._decode_record
+            decode = self._decode_16bit_record
             try:
                 for s in fobj:
                     line += 1
@@ -771,7 +861,7 @@ class IntelHex(object):
     def find(self, sub, start=None, end=None):
         """Return the lowest index in self[start:end] where subsection sub is found.
         Optional arguments start and end are interpreted as in slice notation.
-        
+
         @param  sub     bytes-like subsection to find
         @param  start   start of section to search within (optional)
         @param  end     end of section to search within (optional)
@@ -801,7 +891,7 @@ class IntelHex(object):
         width = int(width)
         if tofile is None:
             tofile = sys.stdout
-            
+
         # start addr possibly
         if self.start_addr is not None:
             cs = self.start_addr.get('CS')
@@ -911,7 +1001,7 @@ class IntelHex(object):
         beginnings = [addresses[b+1] for b in breaks]
         beginnings.insert(0, addresses[0])
         return [(a, b+1) for (a, b) in zip(beginnings, endings)]
-        
+
     def get_memory_size(self):
         """Returns the approximate memory footprint for data."""
         n = sys.getsizeof(self)
@@ -970,7 +1060,7 @@ class IntelHex16bit(IntelHex):
         byte2 = self._buf.get(addr2, None)
 
         if byte1 != None and byte2 != None:
-            return byte1 | (byte2 << 8)     # low endian
+            return byte2 | (byte1 << 8)     # low endian
 
         if byte1 == None and byte2 == None:
             return self.padding
@@ -999,7 +1089,7 @@ class IntelHex16bit(IntelHex):
     def maxaddr(self):
         '''Get maximal address of HEX content in 16-bit mode.
 
-        @return         maximal address used in this object 
+        @return         maximal address used in this object
         '''
         aa = dict_keys(self._buf)
         if aa == []:
@@ -1016,7 +1106,7 @@ class IntelHex16bit(IntelHex):
                         used with start or end parameter.
         @return         array of unsigned short (uint16_t) data.
         '''
-        bin = array('H')
+        bin = array('B')
 
         if self._buf == {} and None in (start, end):
             return bin
@@ -1027,15 +1117,57 @@ class IntelHex16bit(IntelHex):
         start, end = self._get_start_end(start, end, size)
 
         for addr in range_g(start, end+1):
-            bin.append(self[addr])
+            byte1 = self._buf.get(2 * addr, None)
+            byte2 = self._buf.get(2 * addr + 1, None)
+
+            if addr == 0x85000:
+                print(byte1, byte2)
+
+            bin.extend([byte1, byte2])
+
+        print(bin)
 
         return bin
+
+    def _tobinstr_really(self, start, end, pad, size):
+        return array_tobytes(self.tobinarray(start, end, size))
+
+    def tobinfile(self, fobj, start=None, end=None, pad=_DEPRECATED, size=None):
+        '''Convert to binary and write to file.
+
+        @param  fobj    file name or file object for writing output bytes.
+        @param  start   start address of output bytes.
+        @param  end     end address of output bytes (inclusive).
+        @param  pad     [DEPRECATED PARAMETER, please use self.padding instead]
+                        fill empty spaces with this value
+                        (if pad is None then this method uses self.padding).
+        @param  size    size of the block, used with start or end parameter.
+        '''
+        if not isinstance(pad, _DeprecatedParam):
+            print ("IntelHex.tobinfile: 'pad' parameter is deprecated.")
+            if pad is not None:
+                print ("Please, use IntelHex.padding attribute instead.")
+            else:
+                print ("Please, don't pass it explicitly.")
+                print ("Use syntax like this: ih.tobinfile(start=xxx, end=yyy, size=zzz)")
+        else:
+            pad = None
+        if getattr(fobj, "write", None) is None:
+            fobj = open(fobj, "wb")
+            close_fd = True
+        else:
+            close_fd = False
+
+        fobj.write(self._tobinstr_really(start, end, pad, size))
+
+        if close_fd:
+            fobj.close()
 
 
 #/class IntelHex16bit
 
 
-def hex2bin(fin, fout, start=None, end=None, size=None, pad=None):
+def hex2bin(fin, fout, start=None, end=None, size=None, pad=None, hex16=None):
     """Hex-to-Bin convertor engine.
     @return     0   if all OK
 
@@ -1045,9 +1177,13 @@ def hex2bin(fin, fout, start=None, end=None, size=None, pad=None):
     @param  end     end of address range (inclusive; optional)
     @param  size    size of resulting file (in bytes) (optional)
     @param  pad     padding byte (optional)
+    @param  hex16   If the input file is a 16 bit hex file
     """
     try:
-        h = IntelHex(fin)
+        if hex16:
+            h = IntelHex16bit(fin)
+        else:
+            h = IntelHex(fin)
     except HexReaderError:
         e = sys.exc_info()[1]     # current exception
         txt = "ERROR: bad HEX file: %s" % str(e)

@@ -54,6 +54,7 @@ Arguments:
 Options:
     -h, --help              this help message.
     -v, --version           version info.
+    -x, --hex16             Output file should be c2000 16 bit hex file
     -p, --pad=FF            pad byte for empty spaces (ascii hex value).
     -r, --range=START:END   specify address range for writing output
                             (ascii hex value).
@@ -66,10 +67,11 @@ Options:
     start = None
     end = None
     size = None
+    hex16 = False
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hvp:r:l:s:",
-                                  ["help", "version", "pad=", "range=",
+        opts, args = getopt.getopt(sys.argv[1:], "hvxp:r:l:s:",
+                                  ["help", "version", "hex16", "pad=", "range=",
                                    "length=", "size="])
 
         for o, a in opts:
@@ -93,7 +95,9 @@ Options:
                         end = int(l[1], 16)
                 except:
                     raise getopt.GetoptError('Bad range value(s)')
-            elif o in ("-l", "--lenght", "-s", "--size"):
+            elif o in ("-x", "--hex16"):
+                hex16 = True
+            elif o in ("-l", "--length", "-s", "--size"):
                 try:
                     size = int(a, 10)
                 except:
@@ -129,7 +133,7 @@ Options:
         fout = compat.get_binary_stdout()
 
     from intelhex import hex2bin
-    sys.exit(hex2bin(fin, fout, start, end, size, pad))
+    sys.exit(hex2bin(fin, fout, start, end, size, pad, hex16))
 
 if __name__ == '__main__':
     main()
