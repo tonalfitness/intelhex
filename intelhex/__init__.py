@@ -1120,12 +1120,8 @@ class IntelHex16bit(IntelHex):
             byte1 = self._buf.get(2 * addr, None)
             byte2 = self._buf.get(2 * addr + 1, None)
 
-            if addr == 0x85000:
-                print(byte2, byte1)
-
             bin.extend([byte2, byte1])
 
-        print(bin)
         return bin
 
     def _tobinstr_really(self, start, end, pad, size):
